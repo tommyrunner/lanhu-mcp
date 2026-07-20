@@ -239,6 +239,9 @@ export VIEWPORT_HEIGHT=1080        # 浏览器视口高度
 
 # 调试选项
 export DEBUG="false"               # 调试模式（true/false）
+
+# 设计稿开发规则（可选，必须为绝对路径）
+export LANHU_DEVELOPMENT_RULES_PATH="/absolute/path/to/team-development-rules.md"
 ```
 
 > 📝 完整环境变量说明请参考 `config.example.env` 文件
@@ -399,6 +402,7 @@ AI 会自动：
 | `lanhu_get_pages` | 获取原型页面列表 | 分析需求文档前必调用 |
 | `lanhu_get_ai_analyze_page_result` | 分析原型页面内容 | 提取需求细节 |
 | `lanhu_get_designs` | 获取UI设计图列表 | 查看设计稿前必调用 |
+| `lanhu_get_development_rules` | 获取当前设计稿开发规则 | 根据设计稿开发 UI 前调用 |
 | `lanhu_get_ai_analyze_design_result` | 分析UI设计图 | 查看设计稿 |
 | `lanhu_get_design_slices` | 获取切图信息 | 下载图标、素材 |
 | `lanhu_say` | 发布留言 | 团队协作、@提醒 |
@@ -756,6 +760,7 @@ lanhu_say(
 ```
 lanhu-mcp-server/
 ├── lanhu_mcp_server.py          # 主服务器文件（3800+ 行）
+├── DEVELOPMENT_RULES.md         # 通用设计稿开发规则
 ├── requirements.txt              # Python 依赖
 ├── Dockerfile                    # Docker 镜像
 ├── docker-compose.yml            # Docker Compose 配置
@@ -784,6 +789,40 @@ lanhu-mcp-server/
 ```
 
 ## 🔧 高级配置
+
+### 设计稿开发规则
+
+当任务是“根据蓝湖设计稿开发 UI”时，先调用
+`lanhu_get_development_rules`。该工具只读取本地规则，不访问蓝湖接口，
+并返回规则来源、SHA-256 摘要和完整内容。
+
+`lanhu_get_ai_analyze_design_result` 提供可选参数
+`for_development`：
+
+- `false`（默认）：保持原有设计分析行为，不强制读取开发规则。
+- `true`：在访问蓝湖前校验规则，并把完整规则加入分析结果。规则不可用时会在网络请求前返回明确错误。
+
+团队可以通过绝对路径覆盖默认规则：
+
+```bash
+export LANHU_DEVELOPMENT_RULES_PATH="/absolute/path/to/team-development-rules.md"
+```
+
+显式配置的文件不存在、为空、不是 UTF-8 或超过 256 KiB 时会返回错误。
+未配置外部路径时，源码和 Docker 使用项目内的 `DEVELOPMENT_RULES.md`；
+pip 安装若未携带该文件，则使用 Python 内置的通用规则兜底。普通设计分析、
+图片 URL 本地化和切图获取的默认行为均不变。
+
+Docker 使用自定义规则时，将文件挂载到容器并配置容器内绝对路径：
+
+```yaml
+services:
+  lanhu-mcp:
+    volumes:
+      - ./team-development-rules.md:/app/team-development-rules.md:ro
+    environment:
+      - LANHU_DEVELOPMENT_RULES_PATH=/app/team-development-rules.md
+```
 
 ### 自定义角色映射
 

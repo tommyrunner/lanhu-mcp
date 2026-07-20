@@ -49,8 +49,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 RUN playwright install-deps chromium
 
-# 复制MCP服务器文件
+# 复制MCP服务器文件和可覆盖的默认开发规则
 COPY lanhu_mcp_server.py .
+COPY DEVELOPMENT_RULES.md .
 
 # 创建数据和日志目录
 RUN mkdir -p /app/data /app/logs
@@ -64,4 +65,3 @@ EXPOSE 8000
 
 # 运行MCP服务器（使用HTTP传输）
 CMD ["python", "lanhu_mcp_server.py"]
-

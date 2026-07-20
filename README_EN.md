@@ -159,6 +159,9 @@ export VIEWPORT_HEIGHT=1080        # Browser viewport height
 
 # Debug Options
 export DEBUG="false"               # Debug mode (true/false)
+
+# Design development rules (optional, absolute path required)
+export LANHU_DEVELOPMENT_RULES_PATH="/absolute/path/to/team-development-rules.md"
 ```
 
 > 📝 For complete environment variable documentation, see `config.example.env`
@@ -522,6 +525,7 @@ Show all knowledge base messages about "testing"
 | `lanhu_get_pages` | Get prototype page list | Must call before analyzing requirements |
 | `lanhu_get_ai_analyze_page_result` | Analyze prototype page content | Extract requirement details |
 | `lanhu_get_designs` | Get UI design list | Must call before viewing designs |
+| `lanhu_get_development_rules` | Get active design development rules | Call before implementing UI from designs |
 | `lanhu_get_ai_analyze_design_result` | Analyze UI designs | View design drafts |
 | `lanhu_get_design_slices` | Get slice information | Download icons and assets |
 | `lanhu_say` | Post message | Team collaboration, @mentions |
@@ -536,6 +540,7 @@ Show all knowledge base messages about "testing"
 ```
 lanhu-mcp-server/
 ├── lanhu_mcp_server.py          # Main server file
+├── DEVELOPMENT_RULES.md         # General design development rules
 ├── requirements.txt              # Python dependencies
 ├── Dockerfile                    # Docker image
 ├── data/                         # Data storage directory
@@ -547,6 +552,43 @@ lanhu-mcp-server/
 ```
 
 ## 🔧 Advanced Configuration
+
+### Design Development Rules
+
+For tasks that implement UI from Lanhu designs, call
+`lanhu_get_development_rules` first. This local tool does not access Lanhu. It
+returns the complete rules, their source, and a SHA-256 digest.
+
+`lanhu_get_ai_analyze_design_result` accepts an optional `for_development`
+parameter:
+
+- `false` (default): preserves the existing analysis behavior and does not
+  require development rules.
+- `true`: validates the rules before any Lanhu request and includes the complete
+  rules in the analysis result.
+
+Override the default rules with an absolute path:
+
+```bash
+export LANHU_DEVELOPMENT_RULES_PATH="/absolute/path/to/team-development-rules.md"
+```
+
+An explicitly configured file returns a clear error when it is missing, empty,
+not valid UTF-8, or larger than 256 KiB. Source and Docker runs use the bundled
+`DEVELOPMENT_RULES.md`. If a pip installation does not include that file, the
+server uses its built-in general rules. Normal design analysis, image URL
+localization, and slice retrieval remain unchanged.
+
+To override the rules in Docker, mount the file and use its container path:
+
+```yaml
+services:
+  lanhu-mcp:
+    volumes:
+      - ./team-development-rules.md:/app/team-development-rules.md:ro
+    environment:
+      - LANHU_DEVELOPMENT_RULES_PATH=/app/team-development-rules.md
+```
 
 ### Custom Role Mapping
 

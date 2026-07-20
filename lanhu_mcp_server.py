@@ -69,6 +69,90 @@ mcp = FastMCP("Lanhu Axure Extractor")
 # 全局配置
 DEFAULT_COOKIE = "your_lanhu_cookie_here"  # 请替换为你的蓝湖Cookie，从浏览器开发者工具中获取
 
+SERVER_DIR = Path(__file__).resolve().parent
+DEFAULT_DEVELOPMENT_RULES_PATH = SERVER_DIR / "DEVELOPMENT_RULES.md"
+MAX_DEVELOPMENT_RULES_BYTES = 256 * 1024
+DEFAULT_DEVELOPMENT_RULES_CONTENT = """# Lanhu Design-to-Code Development Rules
+
+Use these rules only for explicit design-to-code work. The target project's
+existing conventions take precedence.
+
+Before coding, inspect the target framework and file structure, identify page
+containers, component boundaries, repeated data, state, static behavior, and
+asset handling. Exclude phone system UI and design-canvas artifacts.
+
+Canvas coordinates describe geometry, not runtime positioning or business
+semantics. Require CSS, annotations, interaction notes, or requirements before
+implementing fixed, sticky, floating, selected, or special-identity behavior.
+
+Preserve design dimensions, spacing, colors, typography, borders, shadows,
+opacity, gradients, images, and cropping. Distinguish shared screen-edge spacing
+from spacing between children. Use parent padding only when it preserves the
+container's visual and interaction semantics.
+
+Follow the active Lanhu asset behavior. Do not replace design images with emoji,
+CSS drawings, unrelated images, or placeholders. Record uncertain requirements
+instead of inventing them.
+"""
+
+
+def _development_rules_error(message: str) -> dict:
+    return {
+        "status": "error",
+        "message": f"Unable to read development rules: {message}",
+        "required_action": "Fix the rules file or unset LANHU_DEVELOPMENT_RULES_PATH.",
+    }
+
+
+def _load_development_rules() -> dict:
+    """Load the configured development rules without accessing Lanhu."""
+    configured_path = os.getenv("LANHU_DEVELOPMENT_RULES_PATH", "").strip()
+    if configured_path:
+        rules_path = Path(configured_path).expanduser()
+        if not rules_path.is_absolute():
+            return _development_rules_error("LANHU_DEVELOPMENT_RULES_PATH must be an absolute path")
+        if not rules_path.exists():
+            return _development_rules_error(f"configured file does not exist: {rules_path}")
+        if not rules_path.is_file():
+            return _development_rules_error(f"configured path is not a file: {rules_path}")
+        source = str(rules_path)
+    elif DEFAULT_DEVELOPMENT_RULES_PATH.is_file():
+        rules_path = DEFAULT_DEVELOPMENT_RULES_PATH
+        source = str(rules_path)
+    else:
+        content = DEFAULT_DEVELOPMENT_RULES_CONTENT
+        return {
+            "status": "success",
+            "source": "built-in fallback",
+            "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "content": content,
+            "required_next_step": "Analyze modules, file structure, and static behavior before coding.",
+        }
+
+    try:
+        with rules_path.open("rb") as rules_file:
+            raw_content = rules_file.read(MAX_DEVELOPMENT_RULES_BYTES + 1)
+        if len(raw_content) > MAX_DEVELOPMENT_RULES_BYTES:
+            return _development_rules_error(
+                f"file exceeds the {MAX_DEVELOPMENT_RULES_BYTES}-byte limit: {rules_path}"
+            )
+        content = raw_content.decode("utf-8")
+    except UnicodeDecodeError:
+        return _development_rules_error(f"file must be valid UTF-8: {rules_path}")
+    except OSError as exc:
+        return _development_rules_error(f"cannot read {rules_path}: {exc}")
+
+    if not content.strip():
+        return _development_rules_error(f"file is empty: {rules_path}")
+
+    return {
+        "status": "success",
+        "source": source,
+        "sha256": hashlib.sha256(raw_content).hexdigest(),
+        "content": content,
+        "required_next_step": "Analyze modules, file structure, and static behavior before coding.",
+    }
+
 # 从环境变量读取Cookie，如果没有则使用默认值
 COOKIE = os.getenv("LANHU_COOKIE", DEFAULT_COOKIE)
 
@@ -5617,6 +5701,18 @@ async def _get_designs_internal(extractor: LanhuExtractor, url: str) -> dict:
 
 
 @mcp.tool()
+async def lanhu_get_development_rules() -> dict:
+    """
+    [UI Development] Read the current Lanhu design-to-code development rules.
+
+    Call this local, network-free tool before implementing UI from Lanhu
+    designs. The result includes the complete rules, their source, and SHA-256
+    digest so the active version can be verified.
+    """
+    return _load_development_rules()
+
+
+@mcp.tool()
 async def lanhu_get_designs(
     url: Annotated[str, "Lanhu URL WITHOUT docId (indicates UI design project, not PRD). Example: https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=xxx. Required param: pid. tid is optional. Supports detailDetach format: ?pid=xxx&image_id=xxx"],
     ctx: Context = None
@@ -5629,6 +5725,7 @@ async def lanhu_get_designs(
     DO NOT USE for: 切图, 图标, 素材 (use lanhu_get_design_slices instead)
     
     Purpose: Get list of UI design images from designers. Must call this BEFORE lanhu_get_ai_analyze_design_result.
+    For UI implementation tasks, call lanhu_get_development_rules before coding.
     
     Returns:
         Design image list and project metadata
@@ -5664,7 +5761,8 @@ async def lanhu_get_designs(
 async def lanhu_get_ai_analyze_design_result(
         url: Annotated[str, "Lanhu URL WITHOUT docId (indicates UI design project). Example: https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=xxx. Required param: pid. tid is optional. Supports detailDetach format: ?pid=xxx&image_id=xxx"],
         design_names: Annotated[Union[str, List[str]], "Design name(s) or index number(s). 'all' = all designs. Number (e.g. 6) = the 6th item in lanhu_get_designs list (by 'index' field), NOT by name prefix. Exact name (e.g. '6_friend页_挂件墙') = match by full name. Get names/index from lanhu_get_designs first."],
-        ctx: Context = None
+        ctx: Context = None,
+        for_development: Annotated[bool, "Load and prepend design-to-code development rules before analysis"] = False
 ) -> List[Union[str, Image]]:
     """
     [UI Design] Analyze Lanhu UI design images - GET VISUAL CONTENT + HTML CODE
@@ -5674,6 +5772,10 @@ async def lanhu_get_ai_analyze_design_result(
     DO NOT USE for: 切图, 图标, 素材 (use lanhu_get_design_slices instead)
     
     WORKFLOW: First call lanhu_get_designs to get design list, then call this to analyze specific designs.
+    Set for_development=True only when implementing UI. Development mode loads
+    lanhu_get_development_rules first and requires module, file-structure, and
+    static-behavior analysis before coding. Canvas coordinates are geometry,
+    not evidence of runtime positioning or business semantics.
     
     Returns:
         Visual representation of UI design images AND HTML+CSS code for each design.
@@ -5789,6 +5891,15 @@ async def lanhu_get_ai_analyze_design_result(
         DESIGN IMAGE is for visual verification ONLY. It has the LOWEST priority.
         NEVER use the design image to override any CSS value from the HTML+CSS code.
     """
+    development_rules = None
+    if for_development:
+        development_rules = _load_development_rules()
+        if development_rules["status"] != "success":
+            return [
+                f"{development_rules['message']}\n"
+                f"Required action: {development_rules['required_action']}"
+            ]
+
     extractor = LanhuExtractor()
     try:
         # 记录协作者
@@ -5993,6 +6104,12 @@ async def lanhu_get_ai_analyze_design_result(
         sketch_fallback_count = len([r for r in html_results if not r['success'] and r.get('sketch_html')])
 
         summary_text = f"📊 Design Analysis Results\n"
+        if development_rules:
+            summary_text += "\n--- Design-to-Code Development Rules ---\n"
+            summary_text += f"Source: {development_rules['source']}\n"
+            summary_text += f"SHA-256: {development_rules['sha256']}\n\n"
+            summary_text += development_rules["content"]
+            summary_text += "\n--- End Development Rules ---\n"
         summary_text += f"📁 Project: {designs_data['project_name']}\n"
         summary_text += f"✓ {len([r for r in image_results if r['success']])}/{len(image_results)} images downloaded\n"
         summary_text += f"✓ {html_success_count}/{html_total_count} HTML codes generated\n"
@@ -6219,6 +6336,7 @@ async def lanhu_get_design_slices(
     DO NOT USE for: 看设计图, 设计评审 (use lanhu_get_designs instead)
     
     WORKFLOW: First call lanhu_get_designs to get design list, then call this to get slices from specific design.
+    For UI implementation tasks, call lanhu_get_development_rules before coding.
     
     Returns:
         Slice list with download URLs, AI will handle smart naming and batch download
