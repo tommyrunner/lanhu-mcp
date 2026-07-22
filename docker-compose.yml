@@ -14,11 +14,13 @@ services:
     volumes:
       - ./data:/app/data  # 挂载数据目录，持久化缓存和截图
       - ./logs:/app/logs  # 挂载日志目录
+      - ./DEVELOPMENT_RULES.md:/app/DEVELOPMENT_RULES.md:ro  # UI 开发规则可实时更新
     environment:
       # 这些环境变量会覆盖 .env 文件中的配置
       # 如果不需要覆盖，可以删除这些行
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8000
+      - LANHU_DEVELOPMENT_RULES_PATH=/app/DEVELOPMENT_RULES.md
       # LANHU_COOKIE 从 .env 文件读取
       # FEISHU_WEBHOOK_URL 从 .env 文件读取（可选）
 
@@ -79,4 +81,3 @@ services:
 #     - 检查容器状态：docker-compose ps
 #     - 重启服务：docker-compose restart lanhu-mcp
 #
-

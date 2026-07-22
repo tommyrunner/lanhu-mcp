@@ -29,6 +29,7 @@ def test_imports():
 def test_project_structure():
     """Test that key project files exist"""
     assert (project_root / "lanhu_mcp_server.py").exists()
+    assert (project_root / "DEVELOPMENT_RULES.md").exists()
     assert (project_root / "requirements.txt").exists()
     assert (project_root / "README.md").exists()
     assert (project_root / "pyproject.toml").exists()
@@ -43,4 +44,3 @@ def test_data_directory_creation():
     logs_dir = project_root / "logs"
     logs_dir.mkdir(exist_ok=True)
     assert logs_dir.exists()
-

@@ -69,90 +69,6 @@ mcp = FastMCP("Lanhu Axure Extractor")
 # 全局配置
 DEFAULT_COOKIE = "your_lanhu_cookie_here"  # 请替换为你的蓝湖Cookie，从浏览器开发者工具中获取
 
-SERVER_DIR = Path(__file__).resolve().parent
-DEFAULT_DEVELOPMENT_RULES_PATH = SERVER_DIR / "DEVELOPMENT_RULES.md"
-MAX_DEVELOPMENT_RULES_BYTES = 256 * 1024
-DEFAULT_DEVELOPMENT_RULES_CONTENT = """# Lanhu Design-to-Code Development Rules
-
-Use these rules only for explicit design-to-code work. The target project's
-existing conventions take precedence.
-
-Before coding, inspect the target framework and file structure, identify page
-containers, component boundaries, repeated data, state, static behavior, and
-asset handling. Exclude phone system UI and design-canvas artifacts.
-
-Canvas coordinates describe geometry, not runtime positioning or business
-semantics. Require CSS, annotations, interaction notes, or requirements before
-implementing fixed, sticky, floating, selected, or special-identity behavior.
-
-Preserve design dimensions, spacing, colors, typography, borders, shadows,
-opacity, gradients, images, and cropping. Distinguish shared screen-edge spacing
-from spacing between children. Use parent padding only when it preserves the
-container's visual and interaction semantics.
-
-Follow the active Lanhu asset behavior. Do not replace design images with emoji,
-CSS drawings, unrelated images, or placeholders. Record uncertain requirements
-instead of inventing them.
-"""
-
-
-def _development_rules_error(message: str) -> dict:
-    return {
-        "status": "error",
-        "message": f"Unable to read development rules: {message}",
-        "required_action": "Fix the rules file or unset LANHU_DEVELOPMENT_RULES_PATH.",
-    }
-
-
-def _load_development_rules() -> dict:
-    """Load the configured development rules without accessing Lanhu."""
-    configured_path = os.getenv("LANHU_DEVELOPMENT_RULES_PATH", "").strip()
-    if configured_path:
-        rules_path = Path(configured_path).expanduser()
-        if not rules_path.is_absolute():
-            return _development_rules_error("LANHU_DEVELOPMENT_RULES_PATH must be an absolute path")
-        if not rules_path.exists():
-            return _development_rules_error(f"configured file does not exist: {rules_path}")
-        if not rules_path.is_file():
-            return _development_rules_error(f"configured path is not a file: {rules_path}")
-        source = str(rules_path)
-    elif DEFAULT_DEVELOPMENT_RULES_PATH.is_file():
-        rules_path = DEFAULT_DEVELOPMENT_RULES_PATH
-        source = str(rules_path)
-    else:
-        content = DEFAULT_DEVELOPMENT_RULES_CONTENT
-        return {
-            "status": "success",
-            "source": "built-in fallback",
-            "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            "content": content,
-            "required_next_step": "Analyze modules, file structure, and static behavior before coding.",
-        }
-
-    try:
-        with rules_path.open("rb") as rules_file:
-            raw_content = rules_file.read(MAX_DEVELOPMENT_RULES_BYTES + 1)
-        if len(raw_content) > MAX_DEVELOPMENT_RULES_BYTES:
-            return _development_rules_error(
-                f"file exceeds the {MAX_DEVELOPMENT_RULES_BYTES}-byte limit: {rules_path}"
-            )
-        content = raw_content.decode("utf-8")
-    except UnicodeDecodeError:
-        return _development_rules_error(f"file must be valid UTF-8: {rules_path}")
-    except OSError as exc:
-        return _development_rules_error(f"cannot read {rules_path}: {exc}")
-
-    if not content.strip():
-        return _development_rules_error(f"file is empty: {rules_path}")
-
-    return {
-        "status": "success",
-        "source": source,
-        "sha256": hashlib.sha256(raw_content).hexdigest(),
-        "content": content,
-        "required_next_step": "Analyze modules, file structure, and static behavior before coding.",
-    }
-
 # 从环境变量读取Cookie，如果没有则使用默认值
 COOKIE = os.getenv("LANHU_COOKIE", DEFAULT_COOKIE)
 
@@ -179,6 +95,70 @@ VIEWPORT_HEIGHT = int(os.getenv("VIEWPORT_HEIGHT", "1080"))
 
 # 调试模式
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+
+# UI development rules are kept outside the server implementation so teams can
+# update the workflow without editing Python code.
+SERVER_DIR = Path(__file__).resolve().parent
+DEFAULT_DEVELOPMENT_RULES_PATH = SERVER_DIR / "DEVELOPMENT_RULES.md"
+MAX_DEVELOPMENT_RULES_BYTES = 256 * 1024
+
+
+class DevelopmentRulesError(RuntimeError):
+    """Raised when mandatory UI development rules cannot be loaded."""
+
+
+def _get_development_rules_path() -> Path:
+    configured_path = os.getenv("LANHU_DEVELOPMENT_RULES_PATH", "").strip()
+    if not configured_path:
+        return DEFAULT_DEVELOPMENT_RULES_PATH
+
+    path = Path(configured_path).expanduser()
+    if not path.is_absolute():
+        path = SERVER_DIR / path
+    return path
+
+
+def _load_development_rules(path: Optional[Path] = None) -> dict:
+    rules_path = Path(path) if path is not None else _get_development_rules_path()
+    try:
+        raw_content = rules_path.read_bytes()
+    except OSError as exc:
+        raise DevelopmentRulesError(
+            f"无法读取开发规则文件 {rules_path}: {exc}"
+        ) from exc
+
+    if len(raw_content) > MAX_DEVELOPMENT_RULES_BYTES:
+        raise DevelopmentRulesError(
+            f"开发规则文件超过 {MAX_DEVELOPMENT_RULES_BYTES // 1024} KiB 限制: {rules_path}"
+        )
+
+    try:
+        content = raw_content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise DevelopmentRulesError(
+            f"开发规则文件必须使用 UTF-8 编码: {rules_path}"
+        ) from exc
+
+    if not content.strip():
+        raise DevelopmentRulesError(f"开发规则文件为空: {rules_path}")
+
+    return {
+        "source": str(rules_path),
+        "sha256": hashlib.sha256(raw_content).hexdigest(),
+        "content": content,
+    }
+
+
+def _format_development_rules_context(rules: dict) -> str:
+    return (
+        "# Lanhu UI 开发前置规则（强制）\n\n"
+        f"规则来源: {rules['source']}\n"
+        f"规则版本 SHA-256: {rules['sha256']}\n\n"
+        f"{rules['content'].rstrip()}\n\n"
+        "---\n"
+        "设计分析必须在读取并遵守以上规则后进行。先输出模块化方案和文件结构，"
+        "得到确认或完成自检后再开始编码。\n"
+    )
 
 # 角色枚举（用于识别用户身份）
 VALID_ROLES = ["后端", "前端", "客户端", "开发", "运维", "产品", "项目经理"]
@@ -1813,6 +1793,15 @@ def _localize_image_urls(html_code: str, design_name: str) -> tuple[str, dict]:
     result = re.sub(r'url\(([\'"]*https?://[^\)]*)\)', _replace_css_url, result)
 
     return result, url_mapping
+
+
+def _prepare_design_html_for_development(
+    html_code: str,
+    design_name: str,
+) -> tuple[str, dict]:
+    """Keep Lanhu URLs for now and retain a mapping for future localization."""
+    _, future_local_mapping = _localize_image_urls(html_code, design_name)
+    return html_code, future_local_mapping
 
 
 # ==================== 转换器结束 ====================
@@ -5703,13 +5692,34 @@ async def _get_designs_internal(extractor: LanhuExtractor, url: str) -> dict:
 @mcp.tool()
 async def lanhu_get_development_rules() -> dict:
     """
-    [UI Development] Read the current Lanhu design-to-code development rules.
+    [UI Development Rules] Read the mandatory rules BEFORE Lanhu UI development.
 
-    Call this local, network-free tool before implementing UI from Lanhu
-    designs. The result includes the complete rules, their source, and SHA-256
-    digest so the active version can be verified.
+    USE THIS FIRST when there is any 开发意图, including: 开发, 实现, 编码,
+    还原页面, 生成页面, 生成组件, 修改页面, 根据设计图写代码, design-to-code.
+
+    REQUIRED WORKFLOW:
+    1. Call this tool before lanhu_get_designs, lanhu_get_ai_analyze_design_result,
+       or lanhu_get_design_slices when the user intends to develop UI.
+    2. Read the complete returned Markdown; do not summarize away constraints.
+    3. Analyze modules and propose the file structure before writing code.
+
+    The file is re-read on every call. Teams can update it without changing the
+    server, or set LANHU_DEVELOPMENT_RULES_PATH to an external Markdown file.
     """
-    return _load_development_rules()
+    try:
+        rules = _load_development_rules()
+    except DevelopmentRulesError as exc:
+        return {
+            "status": "error",
+            "message": str(exc),
+            "required_action": "修复开发规则文件后再继续设计分析或编码。",
+        }
+
+    return {
+        "status": "success",
+        **rules,
+        "required_next_step": "先输出模块化分析和建议文件结构，再继续设计分析与编码。",
+    }
 
 
 @mcp.tool()
@@ -5723,9 +5733,12 @@ async def lanhu_get_designs(
     USE THIS WHEN user says: UI设计图, 设计图, 设计稿, 视觉设计, UI稿, 看看设计, 帮我看设计图, 设计评审
     DO NOT USE for: 需求文档, PRD, 原型, 交互稿, Axure (use lanhu_get_pages instead)
     DO NOT USE for: 切图, 图标, 素材 (use lanhu_get_design_slices instead)
+
+    DEVELOPMENT GATE: If the user shows any 开发 intent (开发/实现/编码/还原页面/
+    生成组件/修改页面/design-to-code), MUST call lanhu_get_development_rules FIRST
+    and read the complete Markdown before calling this tool.
     
     Purpose: Get list of UI design images from designers. Must call this BEFORE lanhu_get_ai_analyze_design_result.
-    For UI implementation tasks, call lanhu_get_development_rules before coding.
     
     Returns:
         Design image list and project metadata
@@ -5761,8 +5774,7 @@ async def lanhu_get_designs(
 async def lanhu_get_ai_analyze_design_result(
         url: Annotated[str, "Lanhu URL WITHOUT docId (indicates UI design project). Example: https://lanhuapp.com/web/#/item/project/stage?tid=xxx&pid=xxx. Required param: pid. tid is optional. Supports detailDetach format: ?pid=xxx&image_id=xxx"],
         design_names: Annotated[Union[str, List[str]], "Design name(s) or index number(s). 'all' = all designs. Number (e.g. 6) = the 6th item in lanhu_get_designs list (by 'index' field), NOT by name prefix. Exact name (e.g. '6_friend页_挂件墙') = match by full name. Get names/index from lanhu_get_designs first."],
-        ctx: Context = None,
-        for_development: Annotated[bool, "Load and prepend design-to-code development rules before analysis"] = False
+        ctx: Context = None
 ) -> List[Union[str, Image]]:
     """
     [UI Design] Analyze Lanhu UI design images - GET VISUAL CONTENT + HTML CODE
@@ -5770,12 +5782,32 @@ async def lanhu_get_ai_analyze_design_result(
     USE THIS WHEN user says: UI设计图, 设计图, 设计稿, 视觉设计, UI稿, 看看设计, 帮我看设计图, 设计评审
     DO NOT USE for: 需求文档, PRD, 原型, 交互稿, Axure (use lanhu_get_ai_analyze_page_result instead)
     DO NOT USE for: 切图, 图标, 素材 (use lanhu_get_design_slices instead)
-    
-    WORKFLOW: First call lanhu_get_designs to get design list, then call this to analyze specific designs.
-    Set for_development=True only when implementing UI. Development mode loads
-    lanhu_get_development_rules first and requires module, file-structure, and
-    static-behavior analysis before coding. Canvas coordinates are geometry,
-    not evidence of runtime positioning or business semantics.
+
+    DEVELOPMENT GATE: If the user has UI 开发 intent or wants to modify UI, MUST call
+    lanhu_get_development_rules FIRST and read the complete Markdown. This tool
+    also reloads and prepends the rules so analysis cannot silently skip them.
+
+    WORKFLOW: For development, call lanhu_get_development_rules, then
+    lanhu_get_designs, then this tool. Analyze modules and file structure before coding.
+    Generated HTML keeps the Lanhu/蓝湖 image URLs returned by the design data for visual fidelity.
+    图片资源不会自动上传或迁移。
+    If the design has Tabs, immediately create the business root index and one named
+    directory/index for every confirmed tab, even before component analysis is complete.
+    Each unanalysed tab gets a framework-native minimal template: Vue uses Vue 的 index.vue,
+    React uses React 的最小 JSX, and other frameworks use 其他框架的原生页面入口.
+    Do not invent the tab's full UI.
+
+    BEFORE CODING - INTERACTION BEHAVIOR ANALYSIS:
+    First output a behavior analysis and mark each behavior-bearing region with its type,
+    trigger, initial state, resulting state, static feedback, behavior evidence, and confirmation status.
+    Cover only behaviors visible or supported by evidence, such as Tab 切换, 按钮点击,
+    进度条, 列表滚动, 横向滚动, modal/drawer, carousel, input/selection, and empty/loading states.
+    Implement the marked behaviors as 静态交互逻辑 using the target project's
+    existing state, component, feedback, scroll, style, and test conventions.
+    不新增依赖；不引入 global architecture, real API side effects, auth, persistence,
+    or fake timers unless the requirement and existing project patterns explicitly support them.
+    If behavior evidence is insufficient, mark it as 待确认 and use a conservative non-invasive
+    implementation instead of inferring product semantics from the screenshot.
     
     Returns:
         Visual representation of UI design images AND HTML+CSS code for each design.
@@ -5790,12 +5822,13 @@ async def lanhu_get_ai_analyze_design_result(
             3. Design Image   — visual verification ONLY, never override CSS values
 
         The returned HTML+CSS is the DESIGN SPECIFICATION generated from design schema.
-        Every CSS property value (color, size, spacing, font, gradient, border-radius,
-        etc.) is extracted from the original design data and MUST be used as-is.
+        Its values are authoritative for visual appearance at the design artboard size.
+        Preserve exact visual values when the property is semantically applicable, but
+        do not infer runtime behavior or business meaning from artboard geometry alone.
 
         RULE 1 - HTML+CSS IS DESIGN SPEC, COPY CSS VALUES DIRECTLY:
-            The CSS values are the single source of truth for all design parameters.
-            You MUST directly copy/reuse the exact CSS property values from the code.
+            The CSS values are the primary source of truth for visual parameters.
+            You MUST directly copy/reuse exact values for semantically verified properties.
             DO NOT modify, simplify, or "improve" any CSS value. Specifically:
               - DO NOT change rgba() to hex or vice versa (keep rgba(255,115,10,1) as-is)
               - DO NOT round or simplify numbers (keep 0.30000001192092896 as-is)
@@ -5806,7 +5839,31 @@ async def lanhu_get_ai_analyze_design_result(
               - DO NOT omit any visual element from the design
             The HTML DOM structure and class names indicate layout intent (flex-row=Row,
             flex-col=Column, justify-between=SpaceBetween, etc.), adapt them to the
-            target framework's component model while keeping all CSS values unchanged.
+            target framework's component model while keeping visual values unchanged.
+            Component extraction MUST NOT add layout-changing wrappers or default styles.
+
+        RULE 1.5 - ARTBOARD POSITION IS NOT RUNTIME POSITIONING:
+            Artboard x/y coordinates, edge proximity, and screenshot clipping only
+            describe geometry at the design baseline. They do NOT prove fixed/sticky,
+            floating behavior, current-user identity, selection, or other business meaning.
+            Use fixed/sticky only when generated CSS explicitly declares it or design
+            annotations/requirements explicitly require it. position:absolute is not
+            evidence of fixed/sticky. Without evidence, use normal content flow or ask.
+            Use neutral component names until business semantics are verified.
+
+        RULE 1.6 - INTERACTION BEHAVIOR ANALYSIS:
+            Before coding, output a behavior table with: region/element, behavior type,
+            trigger, initial state, resulting state, static feedback, 行为证据, mock-data
+            need, and confirmation status. This is the 界面行为分析 and 行为标记 stage.
+            Implement only evidenced static interactions and follow the project's existing
+            coding habits. Once Tabs are confirmed, create the root index and every confirmed
+            tab directory/index immediately, 即使尚未完成组件分析; use a 框架原生最小模板 for
+            an unanalysed tab (Vue 的 index.vue, React 的最小 JSX, or 其他框架的原生页面入口).
+            Tab 切换 belongs to the business root index; each tab's content
+            belongs to its named tab directory. Buttons need observable local feedback,
+            progress bars only change when a control or state change is evidenced, and
+            lists use data-driven Items with vertical or 横向滚动 only when scroll evidence
+            exists. Unknown behavior must be marked 待确认. 不新增依赖.
 
         RULE 2 - DETECT USER PROJECT AND GENERATE FRAMEWORK-APPROPRIATE CODE:
             STEP 1: Read project config files (package.json, tsconfig.json, pubspec.yaml,
@@ -5831,23 +5888,14 @@ async def lanhu_get_ai_analyze_design_result(
               color rgba()       → Android: Color.argb(), iOS: UIColor, Flutter: Color
               linear-gradient    → Android: GradientDrawable, iOS: CAGradientLayer
               flex-row / flex-col→ Row/Column (Flutter), HStack/VStack (SwiftUI)
-              position:absolute  → Stack+Positioned (Flutter), ZStack (SwiftUI)
+              position:absolute  → artboard measurement reference; map to positioned
+                                   layout only when runtime semantics require it
 
-        RULE 3 - IMAGE ASSETS USE LOCAL PATHS (MANDATORY):
-            The returned HTML+CSS already uses LOCAL paths (./assets/slices/xxx.png)
-            for all image resources. A download mapping table is provided below each
-            design's HTML code, listing: local_path ← remote_download_url.
-            You MUST:
-              1. Download ALL images from the mapping table to the project's local
-                 assets directory BEFORE generating final code.
-              2. Keep using local paths in the generated code. Adapt paths to the
-                 target framework convention:
-                   React/Vue   → import coverImg from '@/assets/slices/cover.png'
-                   Flutter     → AssetImage('assets/images/cover.png')
-                   Plain HTML  → <img src="./assets/slices/cover.png">
-              3. NEVER use remote lanhu CDN URLs in any generated code.
-            Additionally, call lanhu_get_design_slices(url, design_name) to get the
-            full slice list for more fine-grained assets (icons, background images, etc.).
+        RULE 3 - DEVELOPMENT ASSETS:
+            Keep image URLs returned by Lanhu in the generated HTML so the visual result
+            remains directly tied to the design source. Do not replace images with SVG,
+            CSS shapes, emoji, placeholders, or unrelated assets. Asset hosting migration,
+            if needed later, is a separate explicitly requested operation.
 
         RULE 4 - CROSS-REFERENCE DESIGN TOKENS (SUPPLEMENTARY ONLY):
             Design Tokens (if present) are extracted from the raw Sketch data.
@@ -5863,9 +5911,8 @@ async def lanhu_get_ai_analyze_design_result(
             Vue, Flutter, SwiftUI, Android Compose, etc.), perform a property-by-property
             comparison against the design spec HTML+CSS. Map each CSS property to its
             platform equivalent and verify the value is preserved exactly:
-              ① size constraint: fixed height in spec → must NOT become flexible/wrap
-                  HTML: height not min-height | Flutter: fixed SizedBox, not Flexible
-                  SwiftUI: .frame(height:) not omitted | Compose: height() not wrapContent
+              ① size constraint: preserve verified fixed controls at baseline; for
+                  dynamic-content regions, do not infer clipping from one artboard alone
               ② clipping: overflow:hidden in spec → must clip content in all platforms
                   HTML: overflow:hidden | Flutter: ClipRect/ClipRRect | SwiftUI: .clipped()
                   Compose: clip()/clipToBounds | Android: android:clipChildren="true"
@@ -5874,16 +5921,17 @@ async def lanhu_get_ai_analyze_design_result(
                   Compose: Color(r,g,b,a) | Android XML: #AARRGGBB — values must not drift
               ④ gradient: linear-gradient must map to platform gradient, not solid color
                   Flutter: LinearGradient | SwiftUI: LinearGradient | Compose: Brush.linearGradient
-              ⑤ absolute positioning: left/top values must map to exact offsets
-                  Flutter: Positioned(left:,top:) | SwiftUI: .offset() or .position()
-                  Compose: Box+Modifier.offset() | HTML: position:absolute + left/top
+              ⑤ positioning semantics: preserve relative placement at the design baseline,
+                  but do not copy artboard left/top into absolute/fixed/sticky runtime
+                  positioning when normal flow, Flex, or Grid expresses the relationship
               ⑥ font: family, weight, size must all be preserved; fallback list for HTML
               ⑦ spacing: every margin/padding direction value must be unchanged
                   HTML: margin/padding | Flutter: EdgeInsets | SwiftUI: .padding()
                   Compose: Modifier.padding() | Android: android:layout_margin / android:padding
               ⑧ image assets: no image replaced by SVG/CSS shape/emoji/placeholder
               ⑨ element completeness: every visible element in spec must appear in code
-              ⑩ no remote URLs: no lanhu CDN URLs in any generated asset path
+          ⑩ image URL: keep the Lanhu image URL from the design data unless a separate,
+              explicitly requested asset-hosting migration is being performed
             For each difference found, state explicitly whether it is an intentional
             platform adaptation (e.g. px→dp unit conversion) or an error (value changed).
             All errors MUST be corrected before delivering the final code.
@@ -5891,14 +5939,16 @@ async def lanhu_get_ai_analyze_design_result(
         DESIGN IMAGE is for visual verification ONLY. It has the LOWEST priority.
         NEVER use the design image to override any CSS value from the HTML+CSS code.
     """
-    development_rules = None
-    if for_development:
+    try:
         development_rules = _load_development_rules()
-        if development_rules["status"] != "success":
-            return [
-                f"{development_rules['message']}\n"
-                f"Required action: {development_rules['required_action']}"
-            ]
+    except DevelopmentRulesError as exc:
+        return [
+            "❌ 已阻止设计分析：无法读取强制开发规则。\n"
+            f"{exc}\n"
+            "请修复规则文件或 LANHU_DEVELOPMENT_RULES_PATH 后重试。"
+        ]
+
+    development_rules_context = _format_development_rules_context(development_rules)
 
     extractor = LanhuExtractor()
     try:
@@ -6023,9 +6073,12 @@ async def lanhu_get_ai_analyze_design_result(
                 
                 # 转换为 HTML 并压缩（与 TS 端一致，减少 token）
                 html_code = minify_html(convert_lanhu_to_html(schema_json))
-                
-                # 远程图片 URL 替换为本地路径，生成下载映射表
-                html_code, image_url_mapping = _localize_image_urls(html_code, design['name'])
+
+                # 当前开发阶段保留蓝湖远程 URL；映射表仅供后续本地化使用。
+                html_code, image_url_mapping = _prepare_design_html_for_development(
+                    html_code,
+                    design['name'],
+                )
                 
                 # 保存HTML文件（文件名中的 / 替换为 _）
                 html_filename = f"{design['name'].replace('/', '_')}.html"
@@ -6037,6 +6090,7 @@ async def lanhu_get_ai_analyze_design_result(
                 html_results.append({
                     'success': True,
                     'design_name': design['name'],
+                    'design_id': design['id'],
                     'html_path': str(html_filepath),
                     'html_code': html_code,
                     'image_url_mapping': image_url_mapping,
@@ -6045,6 +6099,7 @@ async def lanhu_get_ai_analyze_design_result(
                 html_results.append({
                     'success': False,
                     'design_name': design['name'],
+                    'design_id': design['id'],
                     'error': str(e)
                 })
 
@@ -6103,13 +6158,8 @@ async def lanhu_get_ai_analyze_design_result(
         html_total_count = len(html_results)
         sketch_fallback_count = len([r for r in html_results if not r['success'] and r.get('sketch_html')])
 
-        summary_text = f"📊 Design Analysis Results\n"
-        if development_rules:
-            summary_text += "\n--- Design-to-Code Development Rules ---\n"
-            summary_text += f"Source: {development_rules['source']}\n"
-            summary_text += f"SHA-256: {development_rules['sha256']}\n\n"
-            summary_text += development_rules["content"]
-            summary_text += "\n--- End Development Rules ---\n"
+        summary_text = development_rules_context + "\n"
+        summary_text += f"📊 Design Analysis Results\n"
         summary_text += f"📁 Project: {designs_data['project_name']}\n"
         summary_text += f"✓ {len([r for r in image_results if r['success']])}/{len(image_results)} images downloaded\n"
         summary_text += f"✓ {html_success_count}/{html_total_count} HTML codes generated\n"
@@ -6121,27 +6171,30 @@ async def lanhu_get_ai_analyze_design_result(
         summary_text += "📋 Design List (display order from top to bottom):\n"
         summary_text += "下方图片顺序与列表中「设计图 1」「设计图 2」… 一一对应，请按序号关联图片与代码。\n\n"
         summary_text += "🚨 CRITICAL: 设计稿代码使用流程（必须按顺序执行）\n"
-        summary_text += "以下 HTML+CSS 是从设计稿 Schema 生成的【设计规格书】，是所有设计参数的权威来源。\n"
+        summary_text += "以下 HTML+CSS 是从设计稿 Schema 生成的【视觉规格书】，用于还原设计基准尺寸下的视觉参数。\n"
         summary_text += "⚠️ 权威优先级: HTML+CSS 代码 > Design Tokens 标注 > 设计图图片\n"
-        summary_text += "⚠️ 核心原则: 直接复用 CSS 属性值，禁止修改/简化/美化任何 CSS 值\n\n"
+        summary_text += "⚠️ 核心原则: 已确认视觉属性直接复用精确值；画板坐标不得推断运行时定位或业务语义\n\n"
         summary_text += "STEP 1 - 探测用户项目环境：\n"
         summary_text += "  读取项目配置文件（package.json / tsconfig.json / pubspec.yaml / build.gradle / Podfile 等）\n"
         summary_text += "  识别框架: React/Vue/Angular/Svelte/Flutter/SwiftUI/Compose/纯HTML\n"
         summary_text += "  识别样式方案: CSS Modules / Tailwind / SCSS / Styled Components / scoped style 等\n"
         summary_text += "  识别项目目录结构和命名规范\n"
+        summary_text += "  识别设计画板宽高，并作为视觉对比的设计基准尺寸\n"
         summary_text += "  如无法判断框架，默认输出纯 HTML 单文件\n\n"
-        summary_text += "STEP 2 - 下载图片资源到本地（必须在生成代码前完成）：\n"
-        summary_text += "  下方每个设计图的 HTML 代码中，图片已替换为本地路径（./assets/slices/xxx.png）\n"
-        summary_text += "  每个设计图下方附有「图片资源下载映射」，列出 本地路径 ← 远程下载地址\n"
-        summary_text += "  文件名已按 CSS 类名生成（如 thumbnail_54.png、group_1.png），具备初步语义。\n"
-        summary_text += "  ⚠️ 若文件名仍不够语义化，在下载时重命名为更清晰的英文名，并同步更新 HTML 中的路径引用。\n"
-        summary_text += "  必须按映射表下载所有图片到项目本地 assets 目录：\n"
-        summary_text += "    macOS/Linux → curl -o <path> \"<url>\"\n"
-        summary_text += "    Windows → PowerShell Invoke-WebRequest -Uri \"<url>\" -OutFile <path>\n"
-        summary_text += "  如需更多切图（图标、背景等），调用 lanhu_get_design_slices(url, design_name)\n\n"
-        summary_text += "STEP 3 - 生成框架适配代码（直接复用 CSS 值，禁止修改）：\n"
-        summary_text += "  从下方 HTML+CSS 直接复制所有 CSS 属性值（颜色/字号/间距/圆角/渐变等）\n"
-        summary_text += "  ⚠️ 必须原样使用 CSS 值，禁止做任何修改：\n"
+        summary_text += "  如果确认存在 Tab，立即创建业务根 index 和每个 Tab 的目录/index，即使尚未完成组件分析也不等待\n"
+        summary_text += "  未分析的 Tab 使用框架原生最小模板：Vue 的 index.vue、React 的最小 JSX，或其他框架的原生页面入口\n\n"
+        summary_text += "STEP 2 - 界面行为分析与行为标记：\n"
+        summary_text += "  先输出行为分析表：区域/元素、行为类型、触发方式、初始状态、交互后状态、静态反馈、证据、模拟数据和待确认项\n"
+        summary_text += "  识别实际出现的 Tab 切换、按钮点击、进度条、列表滚动、横向滚动、弹窗/抽屉、轮播、输入/选择和加载/空状态\n"
+        summary_text += "  只实现有设计标注、CSS/结构、需求说明或项目既有模式支持的行为；截图裁切和贴边不能单独证明滚动或固定行为\n"
+        summary_text += "  静态交互逻辑只处理本地状态、视图切换、提示反馈、模拟数据筛选和滚动表现，不接入真实业务副作用\n"
+        summary_text += "  遵循项目现有编码习惯，不新增状态管理、UI、手势或其他依赖；证据不足的行为标记为待确认\n\n"
+        summary_text += "STEP 3 - 图片资源：\n"
+        summary_text += "  HTML 和 CSS 保留蓝湖设计数据返回的图片 URL，确保与设计稿视觉资源一致。\n"
+        summary_text += "  不替换为 SVG、CSS 图形、Emoji、占位图或无关图片；资源托管迁移需单独提出需求。\n\n"
+        summary_text += "STEP 4 - 生成框架适配代码（精确视觉值 + 经验证的布局语义）：\n"
+        summary_text += "  对语义适用的属性，从下方 HTML+CSS 复制精确值（颜色/字号/间距/圆角/渐变等）\n"
+        summary_text += "  ⚠️ 已确认视觉值禁止擅自修改：\n"
         summary_text += "    - rgba(255,115,10,1) 不要改成 #FF730A\n"
         summary_text += "    - linear-gradient 不要简化成纯色\n"
         summary_text += "    - margin/padding 数值不要四舍五入\n"
@@ -6154,22 +6207,20 @@ async def lanhu_get_ai_analyze_design_result(
         summary_text += "    SwiftUI        → View + ViewModifier，px→pt\n"
         summary_text += "    Android Compose → @Composable + Modifier，px→dp，font px→sp\n"
         summary_text += "    纯 HTML         → 单个 .html 文件，内联 <style>（含 common.css 工具类）\n"
-        summary_text += "  图片路径按框架约定适配（代码中已是本地路径，只需调整路径格式）：\n"
-        summary_text += "    React/Vue → import img from '@/assets/slices/xxx.png'\n"
-        summary_text += "    Flutter   → AssetImage('assets/images/xxx.png')\n"
-        summary_text += "    纯 HTML   → <img src=\"./assets/slices/xxx.png\">（已就绪）\n\n"
-        summary_text += "STEP 4 - 对照 Design Tokens 补充校验（如下方包含 Design Tokens）：\n"
+        summary_text += "  开发代码可直接使用当前设计数据中的蓝湖图片 URL；如需迁移资源地址，必须单独确认迁移方案。\n"
+        summary_text += "  Flex 布局禁止使用 gap/row-gap/column-gap，间距使用 margin 并处理末项。\n\n"
+        summary_text += "  🚫 画板坐标、底部贴边、截图裁切不能证明 fixed/sticky 或当前用户状态。\n"
+        summary_text += "  只有 CSS、设计标注或需求明确说明时才实现固定/吸附；否则使用普通内容流或先确认。\n\n"
+        summary_text += "STEP 5 - 对照 Design Tokens 补充校验（如下方包含 Design Tokens）：\n"
         summary_text += "  Design Tokens 来自原始 Sketch 设计数据，作为补充参考。\n"
         summary_text += "  优先级: HTML+CSS > Design Tokens > 设计图\n"
         summary_text += "  仅当 HTML+CSS 中明显缺失某属性时，用 Design Token 补充：\n"
         summary_text += "    如渐变填充、复杂阴影、多边圆角等 CSS 未能完整表达的属性\n"
         summary_text += "  Design Token 不能覆盖 HTML+CSS 中已有的值。\n\n"
-        summary_text += "STEP 5 - 代码完成后逐属性还原度核查（必须执行，不得跳过）：\n"
+        summary_text += "STEP 6 - 代码完成后逐属性还原度核查（必须执行，不得跳过）：\n"
         summary_text += "  适用于所有目标平台：HTML/CSS、React、Vue、Flutter、SwiftUI、Compose、Android XML 等。\n"
         summary_text += "  将设计稿 HTML+CSS 中每个属性映射到目标平台等价写法，逐一核查值是否还原：\n"
-        summary_text += "  ① 尺寸约束：设计稿固定 height 的地方，目标平台不得变为自适应/wrap\n"
-        summary_text += "     HTML: height 不能改成 min-height | Flutter: SizedBox 不能换成 Flexible\n"
-        summary_text += "     SwiftUI: .frame(height:) 不能省略 | Compose: height() 不能用 wrapContent\n"
+        summary_text += "  ① 尺寸约束：基准尺寸下保留已确认固定控件；动态内容区域不能仅凭单张画板强制裁切\n"
         summary_text += "  ② 裁剪：设计稿 overflow:hidden 的容器，各平台必须同步裁剪\n"
         summary_text += "     HTML: overflow:hidden | Flutter: ClipRect/ClipRRect | SwiftUI: .clipped()\n"
         summary_text += "     Compose: clip() | Android: android:clipChildren=\"true\"\n"
@@ -6178,24 +6229,27 @@ async def lanhu_get_ai_analyze_design_result(
         summary_text += "     Compose: Color(r,g,b,a) | Android XML: #AARRGGBB，禁止四舍五入\n"
         summary_text += "  ④ 渐变：linear-gradient 必须映射为平台渐变，不能退化为纯色\n"
         summary_text += "     Flutter: LinearGradient | SwiftUI: LinearGradient | Compose: Brush.linearGradient\n"
-        summary_text += "  ⑤ 绝对定位：left/top 坐标值必须原样映射\n"
-        summary_text += "     Flutter: Positioned(left:,top:) | SwiftUI: .offset() | Compose: Modifier.offset()\n"
+        summary_text += "  ⑤ 定位语义：画板 left/top 只作为相对位置测量，普通流/Flex/Grid 能还原时不强制绝对定位\n"
+        summary_text += "     未明确出现 fixed/sticky 或需求说明时，禁止推断吸顶、吸底、悬浮行为\n"
         summary_text += "  ⑥ 字体：family、weight、size 三者都必须还原；HTML 还需保留 fallback 顺序\n"
         summary_text += "  ⑦ 间距：每个方向的 margin/padding 数值不得改动\n"
         summary_text += "     Flutter: EdgeInsets | SwiftUI: .padding() | Compose: Modifier.padding()\n"
         summary_text += "     Android: android:layout_margin / android:padding\n"
         summary_text += "  ⑧ 图片资源：任何图片不得被 SVG/CSS形状/emoji/占位图替换\n"
         summary_text += "  ⑨ 元素完整性：设计稿中每个可见元素，目标代码中必须对应存在\n"
-        summary_text += "  ⑩ 远程 URL：最终代码中不得残留任何蓝湖 CDN 远程地址\n"
+        summary_text += "  ⑩ 图片 URL：保留设计数据中的蓝湖地址，不能擅自替换为其他资源或占位地址\n"
         summary_text += "  核查结论：对每处差异明确说明是「有意的平台适配（如 px→dp 单位换算）」\n"
         summary_text += "  还是「错误偏差（值发生了改变）」，错误偏差必须立即修正后再交付。\n\n"
         summary_text += "❌ 严禁行为：\n"
         summary_text += "  - 禁止修改 CSS 属性值（不要改颜色格式、不要简化渐变、不要调整数值）\n"
         summary_text += "  - 禁止凭空编造设计参数（颜色、尺寸、间距等必须来自下方 CSS）\n"
         summary_text += "  - 禁止用设计图的视觉感受覆盖 CSS 中的精确值\n"
+        summary_text += "  - 禁止从画板位置、贴边或截图裁切推断 fixed/sticky 和业务身份\n"
+        summary_text += "  - 禁止用未经确认的语义命名组件或改变滚动行为\n"
         summary_text += "  - 禁止用 SVG/CSS 形状/emoji 替换切图资源\n"
         summary_text += "  - 禁止省略任何视觉元素\n"
-        summary_text += "  - 禁止在最终代码中使用蓝湖远程 URL\n\n"
+        summary_text += "  - 禁止擅自替换设计数据中的蓝湖远程图片 URL\n"
+        summary_text += "  - 禁止在 Flex 布局中使用 gap/row-gap/column-gap\n\n"
         summary_text += "📐 common.css 工具类含义（用于理解布局意图）：\n"
         summary_text += "  flex-col = Column 方向布局    flex-row = Row 方向布局\n"
         summary_text += "  justify-between/center/start/end/around/evenly = 主轴对齐\n"
@@ -6212,26 +6266,14 @@ async def lanhu_get_ai_analyze_design_result(
 
             html_r = success_html_results.get(img_r['design_name'])
             if html_r:
-                summary_text += f"   📄 完整代码（图片已替换为本地路径）:\n"
+                summary_text += f"   📄 HTML+CSS 代码（保留蓝湖设计资源 URL）:\n"
                 summary_text += f"   ```html\n"
                 summary_text += html_r['html_code']
                 summary_text += f"\n   ```\n"
 
-                mapping = html_r.get('image_url_mapping', {})
-                if mapping:
-                    summary_text += f"\n   📥 图片资源下载映射（共 {len(mapping)} 个，必须全部下载到项目本地）:\n"
-                    summary_text += f"   代码中已使用本地路径引用，请按以下映射下载对应远程资源：\n"
-                    for local_path, remote_url in mapping.items():
-                        summary_text += f"     {local_path} ← {remote_url}\n"
-                    summary_text += f"   下载命令示例（macOS/Linux）:\n"
-                    summary_text += f"     mkdir -p ./assets/slices\n"
-                    for local_path, remote_url in mapping.items():
-                        summary_text += f'     curl -o "{local_path}" "{remote_url}"\n'
-                    summary_text += f"\n"
-
                 if html_r.get('design_tokens'):
-                    summary_text += f"\n   --- Design Tokens (高风险元素，权威参考) ---\n"
-                    summary_text += f"   以下参数来自原始设计数据，如 HTML+CSS 与此处冲突，以此处为准。\n\n"
+                    summary_text += f"\n   --- Design Tokens（HTML+CSS 缺失属性的补充参考）---\n"
+                    summary_text += f"   如与 HTML+CSS 冲突，不得静默覆盖；请标记冲突并结合设计标注或向用户确认。\n\n"
                     summary_text += html_r['design_tokens']
                     summary_text += f"\n   --- End Design Tokens ---\n"
             else:
@@ -6251,20 +6293,12 @@ async def lanhu_get_ai_analyze_design_result(
                         summary_text += failed_r['sketch_html']
                         summary_text += f"\n   ```\n"
 
-                    fb_mapping = failed_r.get('image_url_mapping', {})
-                    if fb_mapping:
-                        summary_text += f"\n   📥 资源下载映射（共 {len(fb_mapping)} 个，请全部下载到项目本地后替换 HTML 中的 URL）:\n"
-                        summary_text += f"   ⚠️ 下载时必须带 Referer: https://lanhuapp.com/ 请求头\n"
-                        for local_path, remote_url in fb_mapping.items():
-                            summary_text += f"     {local_path} ← {remote_url}\n"
-                        summary_text += f"\n"
-
                     summary_text += f"\n   🎯 使用指南:\n"
-                    summary_text += f"     1. 先下载上方所有资源到本地对应路径，然后替换 HTML 中的远程 URL 为本地路径\n"
-                    summary_text += f"     2. 其中 ./assets/designs/design.png 是设计底图，HTML 的 .design 容器用它做 background-image\n"
+                    summary_text += f"     1. HTML 中保留蓝湖设计资源 URL，直接复用以保持视觉还原\n"
+                    summary_text += f"     2. 设计底图继续作为 .design 容器的 background-image\n"
                     summary_text += f"     3. 每个元素的 data-css 属性包含精确 CSS 标注值，请直接复用到代码中\n"
                     summary_text += f"     4. 文字图层是真实文本（可选中/修改），切图是 <img> 标签\n"
-                    summary_text += f"     5. 调用 lanhu_get_design_slices 可获取更多细粒度切图资源\n\n"
+                    summary_text += f"     5. 调用 lanhu_get_design_slices 可获取更多细粒度切图信息\n\n"
 
                     layer_annots = failed_r.get('layer_css_annotations') or []
                     if layer_annots:
@@ -6334,9 +6368,12 @@ async def lanhu_get_design_slices(
     USE THIS WHEN user says: 切图, 下载切图, 图标, icon, 素材, 资源, 导出切图, 下载素材, 获取图标
     DO NOT USE for: 需求文档, PRD, 原型 (use lanhu_get_pages instead)
     DO NOT USE for: 看设计图, 设计评审 (use lanhu_get_designs instead)
+
+    DEVELOPMENT GATE: If assets are requested for UI 开发, MUST call
+    lanhu_get_development_rules FIRST. Returned Lanhu slice URLs are the design
+    source URLs and may be used as-is when implementing the visual design.
     
     WORKFLOW: First call lanhu_get_designs to get design list, then call this to get slices from specific design.
-    For UI implementation tasks, call lanhu_get_development_rules before coding.
     
     Returns:
         Slice list with download URLs, AI will handle smart naming and batch download

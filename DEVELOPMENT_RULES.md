@@ -1,92 +1,185 @@
-# Lanhu Design-to-Code Development Rules
+# Lanhu UI 开发规则（初版）
 
-Use these rules only when the user intends to implement UI from Lanhu designs.
-The target project's existing conventions, framework, components, and tooling
-take precedence over this document.
+本文件是使用 Lanhu MCP 根据设计图进行开发时的强制前置规则。只要用户表达了“开发、实现、编码、还原页面、生成组件、修改现有页面”等意图，必须先完整读取本文件，再继续获取和分析设计图。
 
-## Required Workflow
+## 1. 固定执行顺序
 
-Before writing code:
+1. 读取本规则文件，不得只凭工具描述或历史记忆执行。
+2. 检查目标代码仓库，识别技术栈、已有目录结构、组件规范、样式方案和命名习惯。
+3. 获取并分析设计图，先界定有效业务区域和需要排除的系统界面元素。
+4. 在编码前完成以组件化为目的的模块化分析，同时识别可由一个 Item 配合模拟数据循环渲染的重复区域，并输出建议文件结构。
+5. 在模块化分析后完成界面行为分析和行为标记，明确静态交互范围、触发方式、状态变化和待确认项。
+6. 确认方案与现有项目兼容后再开始编码。
+7. 完成后逐项核对尺寸、间距、颜色、字体、圆角、边框、阴影、图片、行为和内容完整性。
 
-1. Inspect the target project's framework, file structure, styling approach,
-   reusable components, and existing data patterns.
-2. Separate business UI from phone status bars, home indicators, design-canvas
-   backgrounds, rulers, annotations, selection frames, and watermarks.
-3. Identify page containers, component boundaries, repeated items, state,
-   static interactions, mock data, and shared logic.
-4. Record uncertain behavior instead of inventing it.
-5. Implement with the target project's native patterns and verify the result.
+## 2. 设计图范围与排除项
 
-## Evidence and Semantics
+- 排除手机状态栏，包括时间、信号、电量、系统通知图标、刘海或灵动岛等系统区域。
+- 排除系统级底部手势条或 Home Indicator，除非用户明确要求实现设备外壳或系统界面演示。
+- 不要误删业务自己的顶部导航栏、标题栏、标签栏或底部业务导航。无法判断时，先说明判断依据再编码。
+- 不实现设计工具的画布背景、标尺、标注线、选中框、水印和说明性批注。
+- 对弹窗、键盘、系统权限框等内容先判断其属于业务 UI 还是操作系统 UI；系统 UI 默认不实现。
+- 排除系统状态栏或手势区后，要重新确认业务内容的起点和目标平台安全区处理，不能保留无意义的空白，也不能忽略平台本身需要的 safe area。
 
-- Canvas coordinates describe geometry, not runtime positioning or business
-  meaning.
-- Do not infer `fixed`, `sticky`, floating behavior, current-user identity,
-  selected state, or recommendation state only from edge placement, cropping,
-  color emphasis, or a single numeric value.
-- Implement those semantics only when CSS, design annotations, interaction
-  notes, or requirements provide evidence.
-- Preserve real business navigation, title bars, tabs, and bottom navigation.
+### 布局行为与业务语义证据
 
-## Modules and Files
+- 画板坐标只表示元素在当前设计画板中的几何位置，不等于运行时定位方式、滚动行为或业务身份。
+- 不得仅凭元素位于画板顶部或底部、贴近边缘、截图被裁切、在可视区域最后出现，就推断它是固定栏、吸顶栏、吸底栏、悬浮层或当前用户状态。
+- 只有生成 CSS 明确出现 `position: fixed`、`position: sticky`，或设计标注、交互说明、需求文档明确描述固定/吸附行为时，才能实现对应效果。设计代码中的 `position: absolute`、`left`、`top`、`bottom` 或图层坐标本身不构成 fixed/sticky 的证据。
+- “本人排行”“当前用户”“选中项”“推荐项”等业务语义必须来自明确文案、状态字段、设计标注或需求说明，不能由位置、颜色强调或单个数值自行推断。
+- 证据不足时，默认按普通内容流或普通重复 Item 处理；如果该判断会影响组件结构、滚动方式或核心交互，先向用户确认。
+- 业务语义未确认前，组件和变量使用 `RankItem`、`ListItem`、`FooterSection` 等中性名称，不要提前命名为 `CurrentRankBar`、`StickyFooter` 等带有未经确认语义的名称。
 
-- Prefer the target project's existing module and naming conventions.
-- Create a business module directory only when the project has no relevant
-  convention.
-- Keep the business entry point responsible for page composition.
-- Add `components`, types, data, or hooks files only when they contain real
-  responsibilities.
-- Do not create wrapper-only components. Component extraction must not add DOM
-  wrappers, spacing, positioning contexts, or inheritance changes.
-- When page-level tabs are confirmed, keep shared layout and tab state in the
-  business entry and give each confirmed tab its own minimal entry. Do not
-  invent complete UI for tabs whose designs are unavailable.
+## 3. 编码前的模块化分析
 
-## Static Behavior
+模块化分析的目的是组件化：让页面入口只负责组织业务模块，让具有明确职责、状态或复用价值的区域成为组件，同时避免把整个界面堆在一个超大文件中。文件结构必须建立在分析结果上，不能先建目录再反推组件。
 
-For each behavior supported by evidence, identify its trigger, initial state,
-resulting state, visible feedback, data needs, and unresolved questions.
-Consider tabs, buttons, progress indicators, scrolling, horizontal lists,
-dialogs, drawers, carousels, inputs, selection, loading, and empty states.
+编码前必须先输出模块化分析方案，至少完成以下判断：
 
-Use local state, view switching, lightweight feedback, mock-data filtering, and
-scroll behavior when appropriate. Do not add dependencies solely for a static
-design reproduction.
+- 页面容器与页面级布局职责。
+- 哪些区域具有独立业务职责、独立交互、独立状态或明确复用价值，适合拆成当前业务组件。
+- 哪些能力已经存在于项目公共组件或公共逻辑中，应直接复用而不是在业务目录重复实现。
+- 哪些区域虽然视觉上可以切块，但没有独立职责，不应为了组件化而额外拆分。
+- 哪些重复视觉不需要逐份绘制：分析出一个 Item 的结构后，使用模拟数据和循环渲染生成其余内容。
+- 重复渲染分析不能只覆盖列表、表格、网格；还要主动识别重复卡片、标签、菜单项、统计项、轮播项、步骤项等设计模式。
+- 哪些内容是固定硬文案，可以直接写在界面模板中；哪些内容可能变化，应通过数据字段或模拟数据渲染。
+- 页面状态，包括加载、空数据、错误、禁用和选中状态。
+- 最终业务目录名称、组件边界、数据边界、逻辑边界和文件结构。
 
-## Repeated Content and Data
+不得在没有模块化分析的情况下直接把整张设计图写成一个超大页面组件，也不得为了模块化而拆出只有一次使用且没有独立职责的空壳组件。
 
-- Render lists, grids, tables, repeated cards, tags, menu items, statistics,
-  steps, and carousel items from one item component and data when practical.
-- Literal one-off copy may remain in the template.
-- Put likely API-backed mock data in the current business data module or the
-  project's established data location.
+组件化必须在视觉上透明：拆分组件不得引入额外 DOM 包装、默认 margin/padding、宽高约束、定位上下文或样式继承变化。框架确实需要包装节点时，要验证包装前后的布局、层叠、裁剪和选择器作用域完全一致。
 
-## Visual Fidelity
+## 4. 文件结构
 
-- Use the design-artboard dimensions as the measurement baseline.
-- Preserve dimensions, spacing, colors, typography, line height, radius,
-  borders, shadows, opacity, gradients, images, and cropping.
-- Treat generated HTML/CSS as the primary visual source and design tokens as a
-  supplement.
-- Distinguish page or module edge spacing from spacing between children. Prefer
-  parent padding for shared screen-edge spacing when it does not change the
-  container's background, border, radius, clipping, or click-area semantics.
-- Follow the target project's established `gap` or margin compatibility style.
+一个界面通常代表一个业务模块。优先遵循目标项目现有结构，并在项目规定的页面或模块父目录下，为当前界面建立独立业务文件夹。文件夹使用实际业务名称；如果用户已经指定名称，直接使用用户给出的名称，不要自行改名。
 
-## Assets
+项目没有明确约定时，采用下面的业务目录结构，并根据框架调整 `index` 和组件文件扩展名：
 
-- Do not replace design images with emoji, CSS drawings, unrelated images, or
-  placeholders.
-- Follow the tool's active asset behavior and the target project's asset
-  conventions.
-- Treat migration to another image host as a separate task.
+```text
+<业务名称>/
+  index.tsx
+  components/
+    business-header.tsx
+    business-list.tsx
+    business-listItem.tsx
+  type.ts
+  database.ts
+  hooks/
+    useTime.ts
+```
 
-## Pre-Implementation Check
+- `index` 是当前界面的唯一总入口，负责组合业务组件、连接页面状态和组织整体布局，不承载大量重复结构。
+- `components/` 承载模块化分析后确认需要拆分的当前界面组件。先分析组件职责，不能为了组件化而组件化；已经存在的公共组件直接复用。
+- `type.ts` 仅用于 TypeScript 等强类型项目，承载当前业务专属的数据类型、组件参数类型和状态类型。公共类型优先使用项目已有定义。
+- `database.js` 或 `database.ts` 承载当前业务的基础数据，包括模拟数据、静态配置、选项、映射关系，以及大量重复使用的蓝湖图片 URL 等。文件扩展名跟随项目语言。
+- `hooks/` 仅承载当前界面中确实可以抽离和复用的业务逻辑，例如用 `useTime` 处理当前业务的时间逻辑。项目已有公共 Hook 时直接使用；存在当前业务的特殊处理时，可以在这里进行二次封装。
+- 不要为了凑齐结构创建空的 `components/`、`type.ts`、`database.js`、`database.ts` 或 `hooks/`；只有分析确认需要时才创建。
 
-- Target framework and project conventions inspected.
-- Non-business canvas and system UI excluded.
-- Components, repeated data, state, and file structure identified.
-- Runtime behavior is supported by evidence.
-- Parent padding and child spacing are correctly distinguished.
-- Image handling follows the active Lanhu asset behavior.
-- Uncertain requirements are listed for confirmation.
+### 带 Tab 的界面结构
+
+- 如果模块化分析确认当前界面的总入口存在 Tab，Tab 必须作为业务目录下的二级模块拆分，不能把所有 Tab 内容堆在业务根 `index` 中。
+- 业务根 `index` 是 Tab 总入口，负责 Tab 名称渲染、切换交互、当前 Tab 状态和所有 Tab 共用的页面背景/容器；它不承载某个 Tab 的大量独有业务内容。
+- 发现 Tab 后立即创建业务根 `index` 和所有已确认 Tab 的独立目录；即使尚未完成组件分析，每个 Tab 至少创建 index 文件（即 Tab 的入口文件）。
+- 每个 Tab 目录的 `index` 先提供可运行的框架原生最小模板，这是该 Tab 的占位入口：Vue 使用 Vue 的 index.vue，React 使用 React 的最小 JSX，其他框架使用其他框架的原生页面入口。待行为和组件分析完成后再替换为真实内容，不要为了占位虚构完整 UI。
+- `components/`、`type.ts`、`database.js`/`database.ts` 和 `hooks/` 仍然只在分析确认有职责时创建，不得为了凑结构创建空文件。
+- 推荐结构如下：
+
+```text
+<业务名称>/
+  index.tsx                    # Tab 总入口、切换交互、公共背景
+  <tab1业务名称>/
+    index.tsx                   # Tab 1 内容入口
+    components/
+    type.ts
+    database.ts
+    hooks/
+  <tab2业务名称>/
+    index.tsx                   # Tab 2 内容入口
+    components/
+    type.ts
+    database.ts
+    hooks/
+```
+
+- 如果当前只提供了 Tab 1 的设计或需求，但已经能确认存在 Tab 2，仍要立即创建 Tab 2 的业务目录和 `index` 入口；未提供的 Tab 使用对应框架的原生最小模板，不得虚构 Tab 2 的完整 UI、数据或交互。
+- 如果无法确认 Tab 数量、名称或切换方式，先在模块化分析中说明证据并向用户确认，不要因为目录结构需要而臆造 Tab。
+
+## 5. 界面行为分析与静态交互
+
+界面行为分析是模块化分析之后、编码之前的必需步骤。目标不是凭空补全产品需求，而是根据设计稿、设计标注、需求说明和目标项目已有编码习惯，标记页面中已经有证据支持的界面行为，并把这些行为落实为可操作的静态交互逻辑。
+
+### 行为标记要求
+
+- 逐个识别有行为可能的区域，并标记它是什么东西、触发方式、状态变化、视觉反馈、滚动方向和证据来源。
+- 行为分析至少覆盖：Tab 切换、按钮点击、进度条、列表滚动、横向滚动、弹窗/抽屉、轮播、输入/选择和加载/空状态等实际出现的元素；没有出现的类型不要为了凑表格强行添加。
+- 每个行为必须输出以下字段：区域或元素、行为类型、触发方式、初始状态、交互后状态、静态反馈、是否需要模拟数据、实现依据、是否待确认。
+- `Tab 切换` 要标记当前 Tab、可切换 Tab、对应内容区域和选中态；切换逻辑由业务根 `index` 管理，Tab 内容由对应 Tab 目录的 `index` 承载。
+- `按钮点击` 至少实现可观察的静态反馈，例如沿用项目已有 Toast/Message/提示组件，或在项目没有反馈组件时使用最小的页面内提示；反馈必须明确说明点击了什么按钮，不得伪造真实业务成功。
+- `进度条` 要区分静态展示和可操作进度。只有设计或需求存在拖动、步骤切换或状态变化证据时，才实现本地状态变化；没有证据时只还原当前进度，不添加自动计时或假进度。
+- `列表滚动` 和 `横向滚动` 只能在设计标注、CSS 溢出/滚动属性、交互说明、明确的内容承载关系或需求说明支持时实现。截图被裁切、元素贴边或画板底部出现内容本身不是滚动证据。
+- 列表、表格、网格和其他重复区域仍然只实现一个 Item，再使用模拟数据循环渲染；滚动容器、选中态和空状态应由数据与状态字段驱动。
+
+### 实现边界与项目习惯
+
+- 编码前先检查目标项目已有的状态管理、路由、组件库、Toast/Message、滚动容器、手势处理、样式方案和测试写法；静态交互必须沿用项目现有编码习惯。
+- 不新增依赖：不新增状态管理库、UI 组件库、手势库或其他依赖；不为了一个按钮或 Tab 发明新的全局架构。项目已有公共能力直接复用，特殊逻辑只在当前业务范围内实现。
+- 静态交互只处理本地状态、视图切换、提示反馈、模拟数据筛选和滚动表现，不接入真实 API、鉴权、支付、持久化或后台业务副作用；除非用户明确要求且项目已有对应实现方式。
+- 交互实现不得改变设计稿已确认的尺寸、颜色、间距、字体、图片、定位和层级。为状态增加的 DOM、类名或提示容器必须经过布局验证，不能引入额外可见间距或遮挡。
+- 证据不足的行为必须标记为“待确认”，同时写明当前采用的保守处理；未确认前不实现会改变滚动方式、页面结构、业务数据或核心交互的猜测逻辑。
+
+### 行为分析输出示例
+
+```text
+区域：顶部导航
+行为类型：Tab 切换
+触发方式：点击 Tab 文案
+初始状态：Tab 1 选中，内容区显示 Tab 1
+交互后状态：选中态和内容区同步切换
+静态反馈：沿用项目现有选中态样式，不请求 API
+实现依据：设计中存在多个 Tab 和对应内容区域
+待确认：无
+```
+
+## 6. 图片资源策略
+
+- 开发场景调用 `lanhu_get_ai_analyze_design_result` 时，直接使用分析结果中的蓝湖图片 URL，保持与设计稿资源一致。
+- `lanhu_get_design_slices` 用于查看切图名称、尺寸、颜色和下载地址；除非用户单独提出资源迁移需求，不执行自动下载、上传或 URL 替换。
+- 图片 URL 只能在明确的资源迁移需求下更换；开发还原阶段不得替换为 SVG、CSS 图形、Emoji、占位图或无关图片。
+- 如果蓝湖图片无法访问，应明确报告原始 URL 和访问问题，不能擅自改用其他图片或伪造资源。
+- 保留原始图片比例、裁剪方式、透明度和圆角。只有明确的资源迁移需求才能替换 URL，且不能改变图片的视觉属性。
+
+## 7. 样式开发与还原度规则
+
+- 先确认设计画板宽高，并把它作为设计基准尺寸。在该基准尺寸下，所有已确认的尺寸、间距、颜色、字号、字重、行高、圆角、边框、阴影和透明度必须与设计分析结果一致。
+- 单张设计图只证明一个基准视口下的视觉结果，不能凭空推断响应式断点、折行策略、移动端/桌面端切换或横竖屏布局。存在多尺寸设计稿或明确需求时，才能据此实现对应响应式规则；否则先保证基准尺寸精确还原，再采用不改变设计语义的保守适配。
+- 不得为了“更整齐”擅自四舍五入或改成常用数值；如果目标平台需要单位换算，必须保留换算依据。
+- Flex 布局中禁止使用 `gap`、`row-gap` 和 `column-gap`；元素间隔使用 `margin` 实现，并明确控制首项和末项，不能在容器边缘留下多余间距。横向排列通常清除末项的横向 margin，纵向排列通常清除末项的纵向 margin；反向布局或特殊对齐时按实际方向处理。
+- 选择 `margin-left`、`margin-right`、`margin-top` 或 `margin-bottom` 时，应结合布局方向和现有项目兼容策略保持一致。
+- 设计代码中的画板坐标和绝对定位值是几何测量参考。实现时要还原元素在设计基准尺寸下的相对位置，但如果普通 Flex、Grid 或内容流能够准确表达关系，不得为了照抄 `left/top` 而强制使用绝对定位，更不得转换成 fixed/sticky。
+- 固定尺寸、最小尺寸和自适应尺寸要根据设计意图和内容性质区分。设计中明确固定的控件不能随意改成内容撑开；可能承载动态文案或接口内容的区域，也不能仅凭单张画板高度就强制裁切。
+- 设计要求裁剪时必须保留 `overflow: hidden` 或目标平台的等价裁剪能力。
+- 渐变、透明度、阴影和边框必须使用设计中的精确值，不得退化为近似纯色。
+- 字体必须使用项目已加载且与设计一致的字体、字重和行高。设计字体不可用时要明确说明并选择字形指标最接近的回退字体，同时重新核对换行、基线和容器高度。
+- HTML+CSS 是视觉属性的主要来源，Design Tokens 只补充 HTML+CSS 明确缺失的渐变、阴影、多边圆角等信息。两者出现冲突时不得静默覆盖，必须标记冲突并结合设计标注或向用户确认。
+
+## 8. 重复结构与模拟数据
+
+- 编码前必须分析设计图中哪些内容不需要全部用 UI 逐份绘制。只要多个区域共享相同或近似结构，就应优先考虑数据驱动，而不是复制布局代码。
+- 对列表、表格、网格等明显重复结构，只实现一个 Item 或一行的结构，再通过 `for`、`map`、模板循环或目标框架的等价能力配合模拟数据循环渲染。
+- 不要把识别范围限制在列表、表格、网格。AI 还必须自行分析卡片组、菜单、标签、头像组、统计块、步骤、轮播内容和其他重复模式，判断它们是否同样适合“一个 Item + 数据循环”。
+- 数据驱动只能消除重复代码，不能抹平设计中真实存在的视觉变体。不同状态、尺寸、图标、强调方式或布局差异要通过明确字段和组件变体表达，不能强行套用完全相同的 Item。
+- 固定硬文案可以直接写在 HTML、JSX、模板或 Widget 中；除固定硬文案外，可变化、可重复、未来可能来自接口的展示内容应优先定义为模拟数据再渲染。
+- 模拟数据、静态数据、选项映射和大量重复使用的图片 URL 统一放在当前业务目录的 `database.js` 或 `database.ts` 中，不要散落在页面入口和多个组件内。
+- 模拟数据结构应尽量贴近未来 API 返回结构，具有稳定的 `id` 或业务键，并只定义当前界面真正使用的字段。
+- 模拟数据必须覆盖设计中实际可见数量、顺序、状态、文案长度和图片比例，尤其要保留能触发换行、截断、溢出和高亮状态的样例，不能用过短或完全相同的数据掩盖布局问题。
+- 展示组件依赖数据结构，不直接绑定模拟数据来源。后续接入 API 时，应能删除或替换 `database.js`、`database.ts` 的数据来源，而不需要重写 Item 布局组件。
+
+## 9. 开发前检查清单
+
+- [ ] 已读取本文件的最新内容。
+- [ ] 已识别并排除手机状态栏等非业务系统 UI。
+- [ ] 已完成布局语义、组件化、数据驱动和文件结构分析，并说明关键判断与证据。
+- [ ] 已完成界面行为分析和行为标记，明确静态交互、项目既有实现方式和待确认项。
+- [ ] 已确认实现方案与目标项目现有规范兼容。
+- [ ] 已在设计基准尺寸下完成视觉还原与功能完整性自检。
